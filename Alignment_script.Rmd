@@ -1,0 +1,120 @@
+---
+title: "Flu_pipeline_270922"
+author: "Niall Garvey"
+date: '2022-07-02'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+#install.packages("devtools")
+devtools::install_github("mhahsler/rBLAST")
+```
+
+
+
+```{r}
+
+library(rBLAST)
+library(ggplot2)
+library(Biostrings)
+#read in reference sequences and swiss sequence, swiss sequence is taken from reference file for testing purposes.
+query = readDNAStringSet("/home/niall/NVRL/Flu_pipeline/Swiss_sequence.fa", format="fasta",
+               nrec=-1L, skip=0L, seek.first.rec=FALSE,
+               use.names=TRUE, with.qualities=FALSE)
+
+y = readDNAStringSet("/home/niall/NVRL/Flu_pipeline/Reference_sequences.fa", format="fasta",
+               nrec=-1L, skip=0L, seek.first.rec=FALSE,
+               use.names=TRUE, with.qualities=FALSE)
+
+#reference and query sequence then filtered to remove gaps in sequence 
+filtered_query = gsub('[-]', '', query)
+reference = "Reference_sequences.fa"
+filtered_reference = gsub('[-]', '', reference)
+#need to convert the query sequence with the gaps removed back to a DNA string set
+filtered_query_as_string = DNAStringSet(filtered_query) 
+
+#set up blast
+makeblastdb(filtered_reference, dbtype = 'nucl')
+
+#run BLAST query
+bl = blast(db = filtered_reference, type = 'blastn')
+cl = predict(bl, filtered_query_as_string[1,], BLAST_args="-max_target_seqs 5", custom_format = "sseqid bitscore length pident qstart qend sstart send")
+
+#write nucelotide blast results to a csv file
+write.csv(cl, file = "/home/niall/NVRL/Flu_pipeline/blast_results.csv" )
+
+
+
+```
+
+
+
+```{r}
+#amino acid section of pipeline
+
+#remove gaps from reference sequences
+AA_reference_gaps_removed = gsub('[-]', '', y)
+
+#need to convert the reference sequence with the gaps removed back to a DNA string set
+AA_reference_gaps_removed_as_string = DNAStringSet(AA_reference_gaps_removed)
+
+#translating reference sequence from nucleotide to amino acids
+#no initiation codon parameter set to true as not all reference sequences start with ATG
+translated_AA_reference = translate(AA_reference_gaps_removed_as_string, genetic.code=GENETIC_CODE, no.init.codon=T,
+             if.fuzzy.codon="X")
+
+#outputting these reference sequences as a fasta file to use in the blastx later
+out = "~/NVRL/Flu_pipeline/reference_amino_acids.fasta"
+writeXStringSet(translated_AA_reference, out, append=FALSE,
+                compress=FALSE, compression_level=NA, format="fasta",)
+
+#set up blast
+amino_acid_reference = "~/NVRL/Flu_pipeline/reference_amino_acids.fasta"
+makeblastdb(amino_acid_reference, dbtype = 'prot')
+
+blx2 = blast(db = amino_acid_reference, type = 'blastx')
+clx2 = predict(blx2, filtered_query_as_string[1,], BLAST_args="-max_target_seqs 5", custom_format = "sseqid bitscore length pident qstart qend sstart send")
+
+#extract the id of the sequence which best matches the query sequence
+closest_reference_name = clx2[1,1];
+
+#Then extract the sequence which best matches the query from the reference file
+best_match_reference_sequence = translated_AA_reference[closest_reference_name]
+
+#need query sequence as amino acid for alignment
+query_as_AA = translate(filtered_query_as_string, genetic.code=GENETIC_CODE, no.init.codon=T,
+             if.fuzzy.codon="X")
+
+#extract the id of the sequence which best matches the query sequence
+
+#using the SECOND best match for testing purposes as aligning the best match makes alignment impossible as the query sequence is a 100% match, for actual pipeline use best match 
+#by removing hash from following line, then change script to use best match 
+#closest_reference_name = clx2[1,1];
+second_closest_reference_name = clx2[2,1];
+
+#Then extract the sequence which best matches the query from the reference file
+#best_match_reference_sequence = translated_AA_reference[closest_reference_name]
+second_best_match_reference_sequence = translated_AA_reference[second_closest_reference_name]
+
+#carry out pairwise alignment of reference sequence and query sequence
+#pa2 <- pairwiseAlignment(pattern = query_as_AA, subject = best_match_reference_sequence)
+pa2 <- pairwiseAlignment(pattern = query_as_AA, subject = second_best_match_reference_sequence)
+
+#summarize the results of this alignment as a table
+plz = mismatchTable(pa2)
+
+#output results of alignment as a csv
+write.csv(plz, "~/NVRL/Flu_pipeline/alignment_summary.csv" , row.names = F)
+```
+
+
+
+
+
+
